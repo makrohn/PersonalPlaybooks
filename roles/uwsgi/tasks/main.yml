@@ -1,0 +1,135 @@
+---
+
+- name: Add user account
+  user:
+    name: uwsgi
+    append: yes
+    shell: /bin/bash
+
+- name: Disable uwsgi ssh login
+  lineinfile:
+    dest: /etc/ssh/sshd_config
+    regexp: "^DenyUsers"
+    line: "DenyUsers uwsgi"
+  notify: restart sshd
+
+- name: Install virtualenv
+  pip: name={{ item }} state=latest
+  with_items:
+  - virtualenv
+  - virtualenvwrapper
+  become: true
+  become_user: uwsgi
+
+- name: Add WORKON_HOME to .bashrc
+  lineinfile:
+    dest: /home/uwsgi/.bashrc
+    regexp: "^export WORKON_HOME"
+    state: present
+    line: "export WORKON_HOME=~/.virtualenvs"
+  become: true
+  become_user: uwsgi
+
+- name: Add virtualwrapper to .bashrc
+  lineinfile:
+    dest: /home/uwsgi/.bashrc
+    regexp: "^. /usr/local/bin/virt"
+    state: present
+    line: ". /usr/local/bin/virtualenvwrapper.sh"
+  become: true
+  become_user: uwsgi
+
+- name: Install dependencies within virtualenv
+  pip: name={{ item }} state=latest virtualenv=/home/uwsgi/Env/{{ app_name }} virtualenv_python=python3
+  with_items:
+  - django
+  - gunicorn
+  - psycopg2
+  become: true
+  become_user: uwsgi
+
+- name: Allow port 80
+  ufw:
+    rule: allow
+    port: 80
+
+- name: Create project
+  shell: cd && /home/uwsgi/Env/{{ app_name }}/bin/django-admin.py startproject {{ app_name }}
+  become: true
+  become_user: uwsgi
+
+- name: Set static root
+  lineinfile:
+    dest: /home/uwsgi/{{ app_name }}/{{ app_name }}/settings.py
+    regexp: "^STATIC_ROOT"
+    state: present
+    line: "STATIC_ROOT = os.path.join(BASE_DIR, 'static/')"
+
+- name: Set allowed hosts
+  lineinfile:
+    dest: /home/uwsgi/{{ app_name }}/{{ app_name }}/settings.py
+    regexp: "^ALLOWED_HOSTS"
+    state: present
+    line: 'ALLOWED_HOSTS = ["{{ app_name }}.matthewkrohn.net"]'
+
+- name: Collect static
+  shell: /home/uwsgi/Env/{{ app_name }}/bin/python /home/uwsgi/{{ app_name }}/manage.py collectstatic
+  become: true
+  become_user: uwsgi
+
+- name: Make migrations
+  shell: /home/uwsgi/Env/{{ app_name }}/bin/python /home/uwsgi/{{ app_name }}/manage.py makemigrations
+  become: true
+  become_user: uwsgi
+
+- name: Migrate
+  shell: /home/uwsgi/Env/{{ app_name }}/bin/python /home/uwsgi/{{ app_name }}/manage.py migrate
+  become: true
+  become_user: uwsgi
+
+- name: Install Python 3 dev
+  package: name={{ item }} state=latest
+  with_items:
+  - python3-dev
+  become: true
+
+- name: Install uwsgi
+  pip: name={{ item }} state=latest executable=pip3
+  with_items:
+  - uwsgi
+  become: true
+
+- name: Make uwsgi configs folder
+  file:
+    path: /etc/uwsgi/sites
+    state: directory
+    mode: 760
+
+- name: Create site ini
+  template:
+    src: site.ini.j2
+    dest: /etc/uwsgi/sites/{{ app_name }}.ini
+
+- name: copy systemd file
+  template:
+    src: uwsgi.service.j2
+    dest: /etc/systemd/system/uwsgi.service
+
+- name: Install nginx
+  package: name={{ item }} state=latest
+  with_items:
+  - nginx
+  become: true
+
+- name: install site definition
+  template:
+    src: site.j2
+    dest: /etc/nginx/sites-available/{{ app_name }}
+  become: true
+
+- name: Symlink to sites-enabled
+  file:
+    src: /etc/nginx/sites-available/{{ app_name }}
+    dest: /etc/nginx/sites-enabled/{{ app_name }}
+    state: link
+  become: true

@@ -1,0 +1,100 @@
+---
+
+- name: Add user account
+  user:
+    name: mkrohn
+    groups: sudo
+    append: yes
+    shell: /bin/bash
+
+- name: Create .ssh directory
+  file:
+    path: /home/mkrohn/.ssh
+    owner: mkrohn
+    group: mkrohn
+    state: directory
+
+- name: Copy public key to user account
+  copy:
+    src: id_ed25519.pub
+    dest: /home/mkrohn/.ssh/authorized_keys
+    owner: mkrohn
+    group: mkrohn
+    mode: "u=rw,g-rwx,o-rwx"
+
+- name: Disable Passord Authentication
+  lineinfile:
+    dest: /etc/ssh/sshd_config
+    regexp: "^PasswordAuthentication"
+    line: "PasswordAuthentication no"
+  notify: restart sshd
+
+- name: Enable PubKey Authentication
+  lineinfile:
+    dest: /etc/ssh/sshd_config
+    regexp: "^PubkeyAuthentication"
+    line: "PubkeyAuthentication yes"
+  notify: restart sshd
+
+- name: Disable root login
+  lineinfile:
+    dest: /etc/ssh/sshd_config
+    regexp: "^PermitRootLogin"
+    line: "PermitRootLogin no"
+  notify: restart sshd
+
+- name: Enable passwordless sudo
+  lineinfile:
+    dest: /etc/sudoers
+    regexp: "^mkrohn"
+    state: present
+    line: "mkrohn   ALL=(ALL) NOPASSWD: ALL"
+
+- name: Run the equivalent of "apt-get update" as a separate step
+  apt:
+    update_cache: yes
+  when: ansible_os_family == "Debian"
+  become: true
+
+- name: Install some packages I like
+  package: name={{ item }} state=latest
+  with_items:
+  - python3-pip
+  - nano
+  - mtr
+  - net-tools
+  - git
+  - python-pip
+  become: true
+
+- name: Install virtualenv
+  pip: name={{ item }} state=latest
+  with_items:
+  - virtualenv
+  - virtualenvwrapper
+  become: true
+
+- name: Add WORKON_HOME to .bashrc
+  lineinfile:
+    dest: /home/mkrohn/.bashrc
+    regexp: "^export WORKON_HOME"
+    state: present
+    line: "export WORKON_HOME=~/.virtualenvs"
+
+- name: Add virtualwrapper to .bashrc
+  lineinfile:
+    dest: /home/mkrohn/.bashrc
+    regexp: "^. /usr/local/bin/virt"
+    state: present
+    line: ". /usr/local/bin/virtualenvwrapper.sh"
+
+
+- name: Change hostname
+  hostname:
+    name: "{{ ansible_hostname }}"
+
+- name: Turn on ufw
+  ufw:
+    state: enabled
+    rule: allow
+    name: OpenSSH

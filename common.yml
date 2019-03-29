@@ -1,0 +1,7 @@
+---
+
+- name: What I like in Linux
+  hosts: common
+  remote_user: root
+  roles:
+  - common
